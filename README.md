@@ -2,7 +2,7 @@
 
 ## Team Name
 
-**InferenceRouter**
+**Inference Router**
 
 ## Team Roster
 
