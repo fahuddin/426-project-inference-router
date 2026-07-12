@@ -6,9 +6,8 @@
 
 ## Team Roster
 
-Github username        UMASS Email
-fahuddin               fahimuddin@umass.edu
-
+Github username: fahuddin  
+UMASS Email: fahimuddin@umass.edu
 
 
 ## Domain Description
