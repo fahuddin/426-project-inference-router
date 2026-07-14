@@ -9,7 +9,7 @@
 Github username: fahuddin  
 UMASS Email: fahimuddin@umass.edu
 
-Github username: snailpop1  
+Github username: georgesalomon  
 UMASS Email: dmgeorge@umass.edu
 
 
