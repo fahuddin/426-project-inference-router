@@ -4,6 +4,12 @@
 
 **Inference Router**
 
+## Project Documentation
+
+- [Project description](docs/PROJECT.md)
+- [Initial service list](docs/SERVICES.md)
+- [Service level objectives](docs/SLO.md)
+
 ## Team Roster
 
 Github username: fahuddin  
@@ -11,7 +17,6 @@ UMASS Email: fahimuddin@umass.edu
 
 Github username: georgesalomon  
 UMASS Email: dmgeorge@umass.edu
-
 
 ## Domain Description
 
