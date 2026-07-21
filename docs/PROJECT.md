@@ -44,5 +44,4 @@ access when a public computer reservation ends, or leave without information
 about food, housing, education, or benefit programs. These harms fall most
 heavily on people with limited connectivity, time, transportation, or access to
 other support. The project therefore treats bounded response time, explicit
-failure behavior, and recovery from worker failure as requirements tied to the
-community being served.
+failure behavior, and recovery from worker failure as requirements tied to the community being served.
