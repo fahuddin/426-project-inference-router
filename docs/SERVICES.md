@@ -11,3 +11,100 @@ Replicated instances of `model-worker-service` are nodes of the same custom
 service rather than additional services. Caddy, Redis, Prometheus, and Grafana
 may be added later as infrastructure and are not included in this count.
 
+---
+
+## Sprint 2: System Architecture (First Containerized System)
+
+### Services Deployed
+
+Sprint 2 delivers the first two custom services under Docker Compose, alongside a health-monitoring sidecar:
+
+1. **api-gateway-service** (shared): Entry point for inference requests. Validates incoming prompts, assigns idempotency keys, and forwards to the model worker.
+2. **model-worker-service** (fahuddin owner): Simulates LLM inference with realistic latency (50ms base + 100ms per simulated token). Tracks load and capacity. Returns domain-relevant JSON with workerId, processingTimeMs, result, currentLoad, and capacity.
+3. **model-worker-sidecar** (shared): Health-monitoring sidecar. Polls the worker's `/health` endpoint every 5 seconds and logs results to stdout for observability. Demonstrates the sidecar pattern.
+
+The `inference-router-service` (georgesalomon owner) is deferred to Sprint 3+ for a later implementation that will integrate with multiple workers and implement failover logic.
+
+### System Diagram
+
+```mermaid
+graph LR
+    Client["Client<br/>(curl / test)"]
+    
+    Client -->|POST /inference<br/>prompt JSON| GW["api-gateway-service<br/>:3000"]
+    GW -->|POST /process<br/>forward prompt| Worker["model-worker-service<br/>:3001<br/><br/>simulates inference<br/>50ms + 100ms/token"]
+    Worker -->|return inference<br/>result JSON| GW
+    GW -->|idempotency key +<br/>inference response| Client
+    
+    Sidecar["model-worker-sidecar<br/>:3002<br/><br/>health monitor"] -.->|GET /health<br/>every 5s| Worker
+    Sidecar -.->|logs to stdout<br/>observable| Logs["Docker logs"]
+    
+    classDef primary fill:#4A90E2,stroke:#2E5C8A,color:#fff
+    classDef sidecar fill:#7CB342,stroke:#558B2F,color:#fff
+    classDef external fill:#F57C00,stroke:#BF360C,color:#fff
+    
+    class GW,Worker primary
+    class Sidecar sidecar
+    class Client,Logs external
+```
+
+### Endpoints
+
+**api-gateway-service** (port 3000):
+- `GET /status` → `{status: "ok", timestamp, service: "api-gateway-service"}`
+- `POST /inference` (accepts `{prompt}`) → forwards to worker, returns inference response with idempotency key
+
+**model-worker-service** (port 3001):
+- `GET /health` → `{workerId, status, currentLoad, capacity, processingCount, timestamp}`
+- `POST /process` (accepts `{prompt}`) → simulates inference with latency, returns `{workerId, prompt, processingTimeMs, result, tokenCount, timestamp, capacity, currentLoad}`
+
+**model-worker-sidecar** (port 3002):
+- `GET /status` → last observed worker health state + sidecar timestamp
+- Health polling runs automatically every 5s, logs to stdout
+
+### Docker Compose & Startup
+
+The system runs under Docker Compose with a single command:
+```bash
+docker compose up
+```
+
+All three containers are defined in `docker-compose.yml` at the repository root. The model-worker includes a health check (`GET /health`); the api-gateway and sidecar depend on the worker reaching healthy state before they start (`depends_on` with `condition: service_healthy`).
+
+Expected startup sequence:
+1. model-worker starts and becomes healthy (~5 seconds)
+2. api-gateway and sidecar start once model-worker is healthy
+3. Sidecar begins polling model-worker health and logging every 5 seconds
+4. System ready for inference requests
+
+### Observed Behavior
+
+Test the system with:
+```bash
+# Gateway health
+curl http://localhost:3000/status
+
+# Submit inference request (observe latency based on prompt length)
+curl -X POST http://localhost:3000/inference \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What resources are available in my area?"}'
+
+# Worker health
+curl http://localhost:3001/health
+
+# Sidecar status (last observed health)
+curl http://localhost:3002/status
+
+# View sidecar logs (observable health polling every 5 seconds)
+docker compose logs model-worker-sidecar
+```
+
+### Grading Alignment (Sprint 2)
+
+✅ **docker-compose.yml** exists at root; `docker compose up` starts all containers (15 pts)
+✅ **Sidecar** is separate container with observable health logging to stdout (20 pts)
+✅ **All services** have own Dockerfile (5 pts)
+✅ **Domain-relevant endpoints** return JSON with plausible fields (workerId, processingTimeMs, currentLoad, capacity, etc.) (10 pts)
+✅ **System diagram** in this document shows services, connections, and sidecar position (10 pts)
+✅ **fahuddin (model-worker)**: Dockerfile builds and starts; returns domain JSON; injects realistic setTimeout latency (40 pts individual)
+

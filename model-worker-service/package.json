@@ -1,0 +1,12 @@
+{
+  "name": "model-worker-service",
+  "version": "1.0.0",
+  "description": "Model Worker Service — simulates LLM inference with latency and load tracking",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

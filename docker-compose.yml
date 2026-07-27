@@ -1,0 +1,25 @@
+services:
+  api-gateway:
+    build: ./api-gateway-service
+    ports:
+      - "3000:3000"
+    depends_on:
+      model-worker:
+        condition: service_healthy
+  model-worker:
+    build: ./model-worker-service
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 5s
+  model-worker-sidecar:
+    build: ./model-worker-sidecar
+    ports:
+      - "3002:3002"
+    depends_on:
+      model-worker:
+        condition: service_healthy
