@@ -5,7 +5,7 @@ and one shared entry point.
 
 - `inference-router-service` (owner: georgesalomon): Tracks mock worker health and load, selects an available worker for each request, and fails over when the selected worker is unavailable.
 - `model-worker-service` (owner: fahuddin): It just simulates language-model inference with configurable processing latency, capacity limits, health state, scripted failures, queues, and prefix hits.
-- `api-gateway-service` (shared): Validates incoming inference requests, assigns or accepts an idempotency key, forwards each request to the router, and returns a consistent response to the client.
+- `api-gateway-service` (Sprint 2 owner: georgesalomon; shared long-term): Validates incoming inference requests, assigns or accepts an idempotency key, and returns a consistent response while acting as the first shared entry point.
 
 Replicated instances of `model-worker-service` are nodes of the same custom
 service rather than additional services. Caddy, Redis, Prometheus, and Grafana
@@ -19,7 +19,7 @@ may be added later as infrastructure and are not included in this count.
 
 Sprint 2 delivers the first two custom services under Docker Compose, alongside a health-monitoring sidecar:
 
-1. **api-gateway-service** (shared): Entry point for inference requests. Validates incoming prompts, assigns idempotency keys, and forwards to the model worker.
+1. **api-gateway-service** (georgesalomon owner for Sprint 2; shared long-term): Entry point for inference requests. Validates incoming prompts, assigns or accepts idempotency keys, simulates gateway processing latency, and forwards to the model worker.
 2. **model-worker-service** (fahuddin owner): Simulates LLM inference with realistic latency (50ms base + 100ms per simulated token). Tracks load and capacity. Returns domain-relevant JSON with workerId, processingTimeMs, result, currentLoad, and capacity.
 3. **model-worker-sidecar** (shared): Health-monitoring sidecar. Polls the worker's `/health` endpoint every 5 seconds and logs results to stdout for observability. Demonstrates the sidecar pattern.
 
@@ -51,8 +51,8 @@ graph LR
 ### Endpoints
 
 **api-gateway-service** (port 3000):
-- `GET /status` → `{status: "ok", timestamp, service: "api-gateway-service"}`
-- `POST /inference` (accepts `{prompt}`) → forwards to worker, returns inference response with idempotency key
+- `GET /status` → domain-specific gateway health, community, role, and routing target
+- `POST /inference` or `POST /v1/inference` (accepts `{prompt}`) → injects 80–200 ms of gateway latency, forwards to the worker, and returns the routing decision and inference response with an idempotency key
 
 **model-worker-service** (port 3001):
 - `GET /health` → `{workerId, status, currentLoad, capacity, processingCount, timestamp}`
@@ -87,7 +87,7 @@ curl http://localhost:3000/status
 # Submit inference request (observe latency based on prompt length)
 curl -X POST http://localhost:3000/inference \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "What resources are available in my area?"}'
+  -d '{"prompt": "What food and housing resources are available in my area?"}'
 
 # Worker health
 curl http://localhost:3001/health
@@ -107,4 +107,4 @@ docker compose logs model-worker-sidecar
 ✅ **Domain-relevant endpoints** return JSON with plausible fields (workerId, processingTimeMs, currentLoad, capacity, etc.) (10 pts)
 ✅ **System diagram** in this document shows services, connections, and sidecar position (10 pts)
 ✅ **fahuddin (model-worker)**: Dockerfile builds and starts; returns domain JSON; injects realistic setTimeout latency (40 pts individual)
-
+✅ **georgesalomon (api-gateway)**: Dockerfile builds and starts; returns domain JSON for public-resource inference routing; injects realistic setTimeout latency (40 pts individual)
