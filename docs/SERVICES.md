@@ -25,7 +25,7 @@ Sprint 2 delivers the first two custom services under Docker Compose, alongside 
 
 The `inference-router-service` (georgesalomon owner) is deferred to Sprint 3+ for a later implementation that will integrate with multiple workers and implement failover logic.
 
-### System Diagram
+### Sprint 2 System Diagram
 
 ```mermaid
 graph LR
@@ -108,3 +108,64 @@ docker compose logs model-worker-sidecar
 ✅ **System diagram** in this document shows services, connections, and sidecar position (10 pts)
 ✅ **fahuddin (model-worker)**: Dockerfile builds and starts; returns domain JSON; injects realistic setTimeout latency (40 pts individual)
 ✅ **georgesalomon (api-gateway)**: Dockerfile builds and starts; returns domain JSON for public-resource inference routing; injects realistic setTimeout latency (40 pts individual)
+
+---
+
+## Sprint 3: Replication, Load Balancing, and Caching
+
+Sprint 3 replicates `model-worker-service` as `model-worker-1` and
+`model-worker-2`. Caddy uses round-robin load balancing and active `/health`
+checks to send requests only to healthy replicas. Both replicas share Redis,
+which caches normalized prompts for 120 seconds. A response includes
+`workerId`, `servedBy`, and `cacheStatus`, so replica selection and cache
+hit/miss behavior are observable.
+
+### Current System Diagram
+
+```mermaid
+flowchart LR
+    Client["Library or nonprofit client"]
+    K6["k6 load test<br/>10 VUs / 30 seconds"]
+    Gateway["api-gateway-service<br/>:3000<br/>validation + gateway latency"]
+    Caddy["Caddy load balancer<br/>:3001<br/>round robin + health checks"]
+    Worker1["model-worker-1<br/>worker-001<br/>:3001"]
+    Worker2["model-worker-2<br/>worker-002<br/>:3001"]
+    Redis[("Redis cache<br/>prompt result TTL: 120s")]
+    Sidecar["model-worker-sidecar<br/>:3002<br/>health monitor"]
+    Logs["Docker logs"]
+
+    Client -->|POST /v1/inference| Gateway
+    K6 -->|concurrent POST requests| Gateway
+    Gateway -->|POST /process| Caddy
+    Caddy -->|round robin| Worker1
+    Caddy -->|round robin| Worker2
+    Worker1 <-->|GET hit / SET miss| Redis
+    Worker2 <-->|GET hit / SET miss| Redis
+    Sidecar -.->|GET /health every 5s| Worker1
+    Sidecar -.->|observable health output| Logs
+
+    classDef entry fill:#4A90E2,stroke:#2E5C8A,color:#fff
+    classDef serving fill:#F57C00,stroke:#BF360C,color:#fff
+    classDef cache fill:#D32F2F,stroke:#8E0000,color:#fff
+    classDef sidecar fill:#7CB342,stroke:#558B2F,color:#fff
+
+    class Gateway,K6 entry
+    class Caddy,Worker1,Worker2 serving
+    class Redis cache
+    class Sidecar,Logs sidecar
+```
+
+### Sprint 3 Endpoints and Verification
+
+- `POST http://localhost:3000/v1/inference` exercises the complete gateway,
+  Caddy, replicated-worker, and Redis path.
+- `GET http://localhost:3001/health` goes through Caddy and identifies the
+  selected worker replica.
+- `GET http://localhost:3001/cache-stats` shows per-replica cache counters.
+- Repeated prompts return `cacheStatus: "hit"` with low worker processing
+  latency; first-time prompts return `cacheStatus: "miss"` after simulated
+  inference latency and are stored in Redis.
+- `docker compose stop model-worker-1` demonstrates that Caddy continues
+  serving requests through `model-worker-2`.
+- `docker compose --profile load-test run --rm k6` runs the Sprint 3 baseline
+  load test.
