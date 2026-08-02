@@ -1,110 +1,215 @@
+const crypto = require('crypto');
+const os = require('os');
 const express = require('express');
+const { createClient } = require('redis');
 
 const app = express();
-const PORT = 3001;
-
-app.use(express.json());
+const PORT = Number(process.env.PORT ?? 3001);
+const WORKER_ID = process.env.WORKER_ID ?? os.hostname();
+const REDIS_URL = process.env.REDIS_URL ?? 'redis://redis:6379';
+const CACHE_TTL_SECONDS = Number(process.env.CACHE_TTL_SECONDS ?? 120);
+const MAX_CONCURRENT_REQUESTS = Number(process.env.MAX_CONCURRENT_REQUESTS ?? 10);
 
 const workerState = {
-  workerId: 'worker-001',
-  capacity: 100,
+  workerId: WORKER_ID,
+  hostname: os.hostname(),
+  capacity: MAX_CONCURRENT_REQUESTS,
   currentLoad: 0,
   health: 'healthy',
   processingCount: 0,
+  cacheHits: 0,
+  cacheMisses: 0,
   lastHealthCheck: new Date().toISOString()
 };
 
-//Simulate inference processing with latency
-function simulateInference(prompt) {
-  return new Promise((resolve) => {
-    const tokenCount = (prompt.length / 4)
-    // 50ms base + 100ms per token
-    const processingTime = 50 + (tokenCount * 100); setTimeout(() => {
-      // return some simple simulated result
-    const results = [
-'Information about available resources has been retrieved.',
-'Processing complete. Recommended next steps provided.',
-'Data analysis finished. Summary prepared for review.',
-'Request processed successfully. Results available.',
-'Analysis complete. Returning synthesized information.'
-      ];
+const redisClient = createClient({ url: REDIS_URL });
+let redisConnected = false;
 
-    const result = results[Math.floor(Math.random() * results.length)];
-    resolve({
-            processingTime,
-    result,
-            tokenCount
-      });
-    }, processingTime);});}
+redisClient.on('error', (error) => {
+  redisConnected = false;
+  console.error(`[model-worker-service:${WORKER_ID}] Redis error: ${error.message}`);
+});
+redisClient.on('ready', () => {
+  redisConnected = true;
+});
 
-// GET /health - Worker health status endpoint
-app.get('/health', (req, res) => {
+app.use(express.json({ limit: '32kb' }));
+
+const delay = (milliseconds) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+
+const cacheKeyFor = (prompt) => {
+  const normalizedPrompt = prompt.trim().toLowerCase();
+  const digest = crypto.createHash('sha256').update(normalizedPrompt).digest('hex');
+  return `inference:${digest}`;
+};
+
+const topicForPrompt = (prompt) => {
+  const normalizedPrompt = prompt.toLowerCase();
+  const topics = ['food', 'housing', 'education', 'benefits'];
+  return topics.find((topic) => normalizedPrompt.includes(topic)) ?? 'community-resources';
+};
+
+const simulateInference = async (prompt) => {
+  const tokenCount = Math.ceil(prompt.length / 4);
+  const processingTimeMs = 250 + Math.min(tokenCount * 55, 1250);
+  const topic = topicForPrompt(prompt);
+
+  await delay(processingTimeMs);
+
+  return {
+    prompt: prompt.substring(0, 100),
+    result: `Synthetic ${topic} information prepared for a public-service resource navigator.`,
+    topic,
+    tokenCount,
+    computedLatencyMs: processingTimeMs,
+    generatedAt: new Date().toISOString(),
+    notice: 'Simulation only; no real model or personal data was used.'
+  };
+};
+
+app.get('/health', (_request, response) => {
   workerState.lastHealthCheck = new Date().toISOString();
-  
-  res.json({
-workerId: workerState.workerId,
-status: workerState.health,
-currentLoad: workerState.currentLoad,
-capacity: workerState.capacity,
-processingCount: workerState.processingCount,
-timestamp: workerState.lastHealthCheck
+
+  response.json({
+    ...workerState,
+    status: workerState.health,
+    redisConnected,
+    timestamp: workerState.lastHealthCheck
   });
 });
 
-app.post('/process', async (req, res) => {
-    const { prompt } = req.body;
-    // Validate request
-    if (!prompt || typeof prompt !== 'string' || prompt.trim() === '') {
-    return res.status(400).json({
+app.get('/cache-stats', (_request, response) => {
+  const cacheRequests = workerState.cacheHits + workerState.cacheMisses;
+
+  response.json({
+    workerId: WORKER_ID,
+    cacheHits: workerState.cacheHits,
+    cacheMisses: workerState.cacheMisses,
+    cacheHitRate: cacheRequests === 0 ? 0 : workerState.cacheHits / cacheRequests,
+    redisConnected,
+    cacheTtlSeconds: CACHE_TTL_SECONDS
+  });
+});
+
+app.post('/process', async (request, response) => {
+  const prompt = typeof request.body.prompt === 'string' ? request.body.prompt.trim() : '';
+
+  if (!prompt) {
+    response.status(400).json({
       error: 'Invalid request',
-      message: 'prompt field is required and must be a non-empty string'
+      message: 'prompt must be a non-empty string'
     });
+    return;
   }
-  // Check if at capacity
+
+  const requestStartedAt = Date.now();
+  const cacheKey = cacheKeyFor(prompt);
+
+  if (redisConnected) {
+    try {
+      const cachedValue = await redisClient.get(cacheKey);
+
+      if (cachedValue) {
+        workerState.cacheHits += 1;
+        const cachedInference = JSON.parse(cachedValue);
+        const processingTimeMs = Date.now() - requestStartedAt;
+        console.log(
+          `[model-worker-service:${WORKER_ID}] cache=hit key=${cacheKey} latencyMs=${processingTimeMs}`
+        );
+
+        response.json({
+          workerId: WORKER_ID,
+          servedBy: os.hostname(),
+          cacheStatus: 'hit',
+          cacheKey,
+          processingTimeMs,
+          ...cachedInference,
+          capacity: workerState.capacity,
+          currentLoad: workerState.currentLoad,
+          timestamp: new Date().toISOString()
+        });
+        return;
+      }
+    } catch (error) {
+      console.error(`[model-worker-service:${WORKER_ID}] Cache read failed: ${error.message}`);
+    }
+  }
+
   if (workerState.currentLoad >= workerState.capacity) {
-return res.status(503).json({
-        error: 'Worker Overloaded',
+    response.status(503).json({
+      error: 'Worker Overloaded',
       message: 'Worker is at capacity and cannot accept new requests',
-      workerId: workerState.workerId,
+      workerId: WORKER_ID,
       currentLoad: workerState.currentLoad,
       capacity: workerState.capacity
     });
+    return;
   }
-  workerState.currentLoad += 10;
+
+  workerState.cacheMisses += 1;
+  workerState.currentLoad += 1;
   workerState.processingCount += 1;
 
   try {
-    // Simulate inference processing (with latency)
-const { processingTime, result, tokenCount } = await simulateInference(prompt);
+    const inference = await simulateInference(prompt);
 
-workerState.currentLoad = Math.max(0, workerState.currentLoad - 10);
+    if (redisConnected) {
+      await redisClient.setEx(cacheKey, CACHE_TTL_SECONDS, JSON.stringify(inference));
+    }
 
-    // Return domain-relevant response
-    return res.json({
-      workerId: workerState.workerId,
-      prompt: prompt.substring(0, 100), // Return first 100 chars of prompt
-      processingTimeMs: processingTime,
-      result: result,
-      tokenCount: tokenCount,
-      timestamp: new Date().toISOString(),
+    const processingTimeMs = Date.now() - requestStartedAt;
+    console.log(
+      `[model-worker-service:${WORKER_ID}] cache=miss key=${cacheKey} latencyMs=${processingTimeMs}`
+    );
+
+    response.json({
+      workerId: WORKER_ID,
+      servedBy: os.hostname(),
+      cacheStatus: 'miss',
+      cacheKey,
+      processingTimeMs,
+      ...inference,
       capacity: workerState.capacity,
-      currentLoad: workerState.currentLoad
+      currentLoad: Math.max(0, workerState.currentLoad - 1),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
-    workerState.currentLoad = Math.max(0, workerState.currentLoad - 10);
-    console.error('Error during inference:', error.message);
-    return res.status(500).json({
-error: 'Internal Server Error',
-message: 'Failed to process inference request',
-workerId: workerState.workerId
+    console.error(`[model-worker-service:${WORKER_ID}] Inference failed: ${error.message}`);
+    response.status(500).json({
+      error: 'Internal Server Error',
+      message: 'Failed to process inference request',
+      workerId: WORKER_ID
     });
+  } finally {
+    workerState.currentLoad = Math.max(0, workerState.currentLoad - 1);
   }
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`[model-worker-service] listening on port ${PORT}`);
-  console.log(`[model-worker-service] POST /process - simulate inference with latency (50ms base + 100ms per token)`);
-  console.log(`[model-worker-service] GET /health - worker state and load information`);
-  console.log(`[model-worker-service] Worker capacity: ${workerState.capacity}, Initial load: ${workerState.currentLoad}`);
-});
+const start = async () => {
+  try {
+    await redisClient.connect();
+    redisConnected = true;
+    console.log(`[model-worker-service:${WORKER_ID}] Connected to Redis`);
+  } catch (error) {
+    console.error(`[model-worker-service:${WORKER_ID}] Starting without Redis: ${error.message}`);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`[model-worker-service:${WORKER_ID}] listening on port ${PORT}`);
+  });
+};
+
+const shutdown = async () => {
+  if (redisClient.isOpen) {
+    await redisClient.quit();
+  }
+  process.exit(0);
+};
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+start();

@@ -111,8 +111,13 @@ const handleInference = async (request, response) => {
       workerId: workerResponse.workerId,
       prompt: workerResponse.prompt,
       processingTimeMs: workerResponse.processingTimeMs,
+      computedLatencyMs: workerResponse.computedLatencyMs,
       result: workerResponse.result,
+      topic: workerResponse.topic,
       tokenCount: workerResponse.tokenCount,
+      cacheStatus: workerResponse.cacheStatus,
+      cacheKey: workerResponse.cacheKey,
+      servedBy: workerResponse.servedBy,
       timestamp: workerResponse.timestamp,
       capacity: workerResponse.capacity,
       currentLoad: workerResponse.currentLoad
