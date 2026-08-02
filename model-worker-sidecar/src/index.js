@@ -2,7 +2,9 @@ const express = require('express');
 const http = require('http');
 
 const app = express();
-const PORT = 3002;
+const PORT = Number(process.env.PORT ?? 3002);
+const WORKER_HOST = process.env.WORKER_HOST ?? 'model-worker-1';
+const WORKER_PORT = Number(process.env.WORKER_PORT ?? 3001);
 
 // Last observed health state
 let lastHealthState = null;
@@ -10,8 +12,8 @@ let lastHealthState = null;
 //poll worker health
 function pollWorkerHealth() {
   const options = {
-hostname: 'model-worker',
-port: 3001,
+hostname: WORKER_HOST,
+port: WORKER_PORT,
 path: '/health',
 method: 'GET'
   };

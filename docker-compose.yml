@@ -1,25 +1,97 @@
 services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+  model-worker-1:
+    build: ./model-worker-service
+    environment:
+      PORT: 3001
+      WORKER_ID: worker-001
+      REDIS_URL: redis://redis:6379
+      CACHE_TTL_SECONDS: 120
+      MAX_CONCURRENT_REQUESTS: 10
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 5
+      start_period: 3s
+
+  model-worker-2:
+    build: ./model-worker-service
+    environment:
+      PORT: 3001
+      WORKER_ID: worker-002
+      REDIS_URL: redis://redis:6379
+      CACHE_TTL_SECONDS: 120
+      MAX_CONCURRENT_REQUESTS: 10
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 5
+      start_period: 3s
+
+  caddy:
+    image: caddy:2.8-alpine
+    depends_on:
+      model-worker-1:
+        condition: service_healthy
+      model-worker-2:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 5
+
   api-gateway:
     build: ./api-gateway-service
+    environment:
+      PORT: 3000
+      WORKER_HOST: caddy
+      WORKER_PORT: 3001
     ports:
       - "3000:3000"
     depends_on:
-      model-worker:
+      caddy:
         condition: service_healthy
-  model-worker:
-    build: ./model-worker-service
-    ports:
-      - "3001:3001"
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
-      interval: 5s
-      timeout: 2s
-      retries: 3
-      start_period: 5s
+
   model-worker-sidecar:
     build: ./model-worker-sidecar
+    environment:
+      PORT: 3002
+      WORKER_HOST: model-worker-1
+      WORKER_PORT: 3001
     ports:
       - "3002:3002"
     depends_on:
-      model-worker:
+      model-worker-1:
         condition: service_healthy
+
+  k6:
+    image: grafana/k6:latest
+    profiles: ["load-test"]
+    environment:
+      BASE_URL: http://api-gateway:3000
+    volumes:
+      - ./load-tests:/scripts:ro
+    depends_on:
+      - api-gateway
+    command: ["run", "/scripts/sprint-3-load.js"]

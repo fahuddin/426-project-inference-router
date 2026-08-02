@@ -1,0 +1,8 @@
+:3001 {
+	reverse_proxy model-worker-1:3001 model-worker-2:3001 {
+		lb_policy round_robin
+		health_uri /health
+		health_interval 2s
+		health_timeout 1s
+	}
+}
