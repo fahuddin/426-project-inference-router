@@ -126,7 +126,7 @@ hit/miss behavior are observable.
 flowchart LR
     Client["Library or nonprofit client"]
     K6["k6 load test<br/>10 VUs / 30 seconds"]
-    Gateway["api-gateway-service<br/>:3000<br/>validation + gateway latency"]
+    Gateway["api-gateway-service<br/>:3000<br/>validation + gateway cache"]
     Caddy["Caddy load balancer<br/>:3001<br/>round robin + health checks"]
     Worker1["model-worker-1<br/>worker-001<br/>:3001"]
     Worker2["model-worker-2<br/>worker-002<br/>:3001"]
@@ -136,7 +136,8 @@ flowchart LR
 
     Client -->|POST /v1/inference| Gateway
     K6 -->|concurrent POST requests| Gateway
-    Gateway -->|POST /process| Caddy
+    Gateway <-->|GET hit / SET miss| Redis
+    Gateway -->|POST /process on cache miss| Caddy
     Caddy -->|round robin| Worker1
     Caddy -->|round robin| Worker2
     Worker1 <-->|GET hit / SET miss| Redis
